@@ -79,6 +79,7 @@ members = [
     "storage/backup-restore",
     "storage/libradb",
     "storage/jellyfish-merkle",
+    "storage/forkable-jellyfish-merkle",
     "storage/schemadb",
     "storage/scratchpad",
     "storage/storage-client",
