@@ -413,6 +413,7 @@ where
             // The new leaf node will have the same nibble_path with a new version as node_key.
             node_key.set_version(version);
             // Create the new leaf node with the same address but new blob content.
+            // TODO: what if the blob are same.
             return Ok(Self::create_leaf_node(
                 node_key,
                 nibble_iter,
@@ -530,7 +531,7 @@ where
                                     siblings.reverse();
                                     siblings
                                 }),
-                            ))
+                            ));
                         }
                     };
                 }

@@ -81,7 +81,7 @@ mod test_helper;
 mod tree_cache;
 
 use anyhow::{bail, ensure, format_err, Result};
-use libra_crypto::{hash::CryptoHash, HashValue};
+use libra_crypto::{hash::CryptoHash, hash::SPARSE_MERKLE_PLACEHOLDER_HASH, HashValue};
 use libra_types::{
     account_state_blob::AccountStateBlob,
     proof::{SparseMerkleProof, SparseMerkleRangeProof},
@@ -131,7 +131,7 @@ pub type StaleNodeIndexBatch = BTreeSet<StaleNodeIndex>;
 #[cfg_attr(any(test, feature = "fuzzing"), derive(Arbitrary))]
 pub struct StaleNodeIndex {
     /// The version since when the node is overwritten and becomes stale.
-    pub stale_since_version: Version,
+    pub stale_since_version: HashValue,
     /// The [`NodeKey`](node_type/struct.NodeKey.html) identifying the node associated with this
     /// record.
     pub node_key: NodeKey,
@@ -169,10 +169,11 @@ where
     #[cfg(test)]
     pub fn put_blob_set(
         &self,
+        state_root_hash: Option<HashValue>,
         blob_set: Vec<(HashValue, AccountStateBlob)>,
-        version: Version,
     ) -> Result<(HashValue, TreeUpdateBatch)> {
-        let (root_hashes, tree_update_batch) = self.put_blob_sets(vec![blob_set], version)?;
+        let (root_hashes, tree_update_batch) =
+            self.put_blob_sets(state_root_hash, vec![blob_set])?;
         assert_eq!(
             root_hashes.len(),
             1,
@@ -224,19 +225,18 @@ where
     /// the batch is not reachable from public interfaces before being committed.
     pub fn put_blob_sets(
         &self,
+        state_root_hash: Option<HashValue>,
         blob_sets: Vec<Vec<(HashValue, AccountStateBlob)>>,
-        first_version: Version,
     ) -> Result<(Vec<HashValue>, TreeUpdateBatch)> {
-        let mut tree_cache = TreeCache::new(self.reader, first_version);
+        let mut tree_cache = TreeCache::new(self.reader, state_root_hash);
         for (idx, blob_set) in blob_sets.into_iter().enumerate() {
             assert!(
                 !blob_set.is_empty(),
                 "Transactions that output empty write set should not be included.",
             );
-            let version = first_version + idx as u64;
             blob_set
                 .into_iter()
-                .map(|(key, blob)| Self::put(key, blob, version, &mut tree_cache))
+                .map(|(key, blob)| Self::put(key, blob, &mut tree_cache))
                 .collect::<Result<_>>()?;
             // Freezes the current cache to make all contents in the current cache immutable.
             tree_cache.freeze();
@@ -248,7 +248,7 @@ where
     fn put(
         key: HashValue,
         blob: AccountStateBlob,
-        version: Version,
+        // version: Version,
         tree_cache: &mut TreeCache<R>,
     ) -> Result<()> {
         let nibble_path = NibblePath::new(key.to_vec());
@@ -261,7 +261,7 @@ where
         // Start insertion from the root node.
         let (new_root_node_key, _) = Self::insert_at(
             root_node_key.clone(),
-            version,
+            // version,
             &mut nibble_iter,
             blob,
             tree_cache,
@@ -277,7 +277,7 @@ where
     /// for this tree is the length of the hash of account addresses.
     fn insert_at(
         node_key: NodeKey,
-        version: Version,
+        // version: Version,
         nibble_iter: &mut NibbleIterator,
         blob: AccountStateBlob,
         tree_cache: &mut TreeCache<R>,
@@ -287,7 +287,7 @@ where
             Node::Internal(internal_node) => Self::insert_at_internal_node(
                 node_key,
                 internal_node,
-                version,
+                // version,
                 nibble_iter,
                 blob,
                 tree_cache,
@@ -295,24 +295,24 @@ where
             Node::Leaf(leaf_node) => Self::insert_at_leaf_node(
                 node_key,
                 leaf_node,
-                version,
+                // version,
                 nibble_iter,
                 blob,
                 tree_cache,
             ),
             Node::Null => {
-                if node_key.nibble_path().num_nibbles() != 0 {
-                    bail!(
-                        "Null node exists for non-root node with node_key {:?}",
-                        node_key
-                    );
-                }
-                // delete the old null node if the at the same version.
-                if node_key.version() == version {
-                    tree_cache.delete_node(&node_key, false /* is_leaf */);
-                }
+                // if node_key.nibble_path().num_nibbles() != 0 {
+                //     bail!(
+                //         "Null node exists for non-root node with node_key {:?}",
+                //         node_key
+                //     );
+                // }
+                // // delete the old null node if the at the same version.
+                // if node_key.version() == version {
+                //     tree_cache.delete_node(&node_key, false /* is_leaf */);
+                // }
                 Self::create_leaf_node(
-                    NodeKey::new_empty_path(version),
+                    // NodeKey::new_empty_path(version),
                     &nibble_iter,
                     blob,
                     tree_cache,
@@ -327,15 +327,11 @@ where
     fn insert_at_internal_node(
         mut node_key: NodeKey,
         internal_node: InternalNode,
-        version: Version,
+        // version: Version,
         nibble_iter: &mut NibbleIterator,
         blob: AccountStateBlob,
         tree_cache: &mut TreeCache<R>,
     ) -> Result<(NodeKey, Node)> {
-        // We always delete the existing internal node here because it will not be referenced anyway
-        // since this version.
-        tree_cache.delete_node(&node_key, false /* is_leaf */);
-
         // Find the next node to visit following the next nibble as index.
         let child_index = nibble_iter.next().expect("Ran out of nibbles");
 
@@ -343,37 +339,45 @@ where
         // node at `child_index`.
         let (_, new_child_node) = match internal_node.child(child_index) {
             Some(child) => {
-                let child_node_key = node_key.gen_child_node_key(child.version, child_index);
-                Self::insert_at(child_node_key, version, nibble_iter, blob, tree_cache)?
+                // let child_node_key = node_key.gen_child_node_key(child.version, child_index);
+                let child_node_key = child.hash.clone();
+                Self::insert_at(child_node_key, nibble_iter, blob, tree_cache)?
             }
             None => {
-                let new_child_node_key = node_key.gen_child_node_key(version, child_index);
-                Self::create_leaf_node(new_child_node_key, nibble_iter, blob, tree_cache)?
+                // let new_child_node_key = node_key.gen_child_node_key(version, child_index);
+                Self::create_leaf_node(nibble_iter, blob, tree_cache)?
             }
         };
 
         // Reuse the current `InternalNode` in memory to create a new internal node.
         let mut children: Children = internal_node.into();
-        children.insert(
+
+        match children.insert(
             child_index,
-            Child::new(new_child_node.hash(), version, new_child_node.is_leaf()),
-        );
-        let new_internal_node = InternalNode::new(children);
+            Child::new(new_child_node.hash(), new_child_node.is_leaf()),
+        ) {
+            // don't need to prune it if no change happens.
+            Some(ref old_child)
+                if &old_child.hash == &new_child_node.hash()
+                    && old_child.is_leaf == new_child_node.is_leaf() => {}
+            _ => {
+                tree_cache.delete_node(&node_key, false /* is_leaf */);
+            }
+        }
 
-        node_key.set_version(version);
-
+        let new_internal_node: Node = InternalNode::new(children).into();
         // Cache this new internal node.
-        tree_cache.put_node(node_key.clone(), new_internal_node.clone().into())?;
-        Ok((node_key, new_internal_node.into()))
+        tree_cache.put_node(new_internal_node.hash(), new_internal_node.clone())?;
+        Ok((new_internal_node.hash(), new_internal_node))
     }
 
     /// Helper function for recursive insertion into the subtree that starts from the
     /// `existing_leaf_node`. Returns the newly inserted node with its
     /// [`NodeKey`](node_type/struct.NodeKey.html).
     fn insert_at_leaf_node(
-        mut node_key: NodeKey,
+        node_key: NodeKey,
         existing_leaf_node: LeafNode,
-        version: Version,
+        // version: Version,
         nibble_iter: &mut NibbleIterator,
         blob: AccountStateBlob,
         tree_cache: &mut TreeCache<R>,
@@ -381,7 +385,6 @@ where
         // We are on a leaf node but trying to insert another node, so we may diverge.
         // We always delete the existing leaf node here because it will not be referenced anyway
         // since this version.
-        tree_cache.delete_node(&node_key, true /* is_leaf */);
 
         // 1. Make sure that the existing leaf nibble_path has the same prefix as the already
         // visited part of the nibble iter of the incoming key and advances the existing leaf
@@ -411,16 +414,23 @@ where
         if nibble_iter.is_finished() {
             assert!(existing_leaf_nibble_iter_below_internal.is_finished());
             // The new leaf node will have the same nibble_path with a new version as node_key.
-            node_key.set_version(version);
+            // node_key.set_version(version);
             // Create the new leaf node with the same address but new blob content.
             // TODO: what if the blob are same.
-            return Ok(Self::create_leaf_node(
-                node_key,
-                nibble_iter,
-                blob,
-                tree_cache,
-            )?);
+            if blob.hash() == existing_leaf_node.blob_hash() {
+                return Ok((existing_leaf_node.hash(), Node::Leaf(existing_leaf_node)));
+            } else {
+                tree_cache.delete_node(&node_key, true /* is_leaf */);
+                return Ok(Self::create_leaf_node(
+                    // node_key,
+                    nibble_iter,
+                    blob,
+                    tree_cache,
+                )?);
+            }
         }
+        // TODO: revisit it.
+        // tree_cache.delete_node(&node_key, true /* is_leaf */);
 
         // 2.2. both are unfinished(They have keys with same length so it's impossible to have one
         // finished and ther other not). This means the incoming key forks at some point between the
@@ -438,50 +448,47 @@ where
         let mut children = Children::new();
         children.insert(
             existing_leaf_index,
-            Child::new(existing_leaf_node.hash(), version, true /* is_leaf */),
+            Child::new(existing_leaf_node.hash(), true /* is_leaf */),
         );
-        node_key = NodeKey::new(version, common_nibble_path.clone());
-        tree_cache.put_node(
-            node_key.gen_child_node_key(version, existing_leaf_index),
-            existing_leaf_node.into(),
-        )?;
 
         let (_, new_leaf_node) = Self::create_leaf_node(
-            node_key.gen_child_node_key(version, new_leaf_index),
+            // node_key.gen_child_node_key(version, new_leaf_index),
             nibble_iter,
             blob,
             tree_cache,
         )?;
         children.insert(
             new_leaf_index,
-            Child::new(new_leaf_node.hash(), version, true /* is_leaf */),
+            Child::new(new_leaf_node.hash(), true /* is_leaf */),
         );
 
         let internal_node = InternalNode::new(children);
         let mut next_internal_node = internal_node.clone();
-        tree_cache.put_node(node_key.clone(), internal_node.into())?;
+        let internal_node: Node = internal_node.into();
+        tree_cache.put_node(internal_node.hash(), internal_node)?;
 
         for _i in 0..num_common_nibbles_below_internal {
             let nibble = common_nibble_path
                 .pop()
                 .expect("Common nibble_path below internal node ran out of nibble");
-            node_key = NodeKey::new(version, common_nibble_path.clone());
             let mut children = Children::new();
             children.insert(
                 nibble,
-                Child::new(next_internal_node.hash(), version, false /* is_leaf */),
+                Child::new(next_internal_node.hash(), false /* is_leaf */),
             );
             let internal_node = InternalNode::new(children);
             next_internal_node = internal_node.clone();
-            tree_cache.put_node(node_key.clone(), internal_node.into())?;
+            let internal_node: Node = internal_node.into();
+            tree_cache.put_node(internal_node.hash(), internal_node)?;
         }
 
-        Ok((node_key, next_internal_node.into()))
+        let next_internal_node: Node = next_internal_node.into();
+        Ok((next_internal_node.hash(), next_internal_node))
     }
 
     /// Helper function for creating leaf nodes. Returns the newly created leaf node.
     fn create_leaf_node(
-        node_key: NodeKey,
+        // node_key: NodeKey,
         nibble_iter: &NibbleIterator,
         blob: AccountStateBlob,
         tree_cache: &mut TreeCache<R>,
@@ -493,7 +500,7 @@ where
                 .expect("LeafNode must have full nibble path."),
             blob,
         );
-
+        let node_key = new_leaf_node.hash();
         tree_cache.put_node(node_key.clone(), new_leaf_node.clone())?;
         Ok((node_key, new_leaf_node))
     }
@@ -501,11 +508,12 @@ where
     /// Returns the account state blob (if applicable) and the corresponding merkle proof.
     pub fn get_with_proof(
         &self,
+        state_root_hash: HashValue,
         key: HashValue,
-        version: Version,
     ) -> Result<(Option<AccountStateBlob>, SparseMerkleProof)> {
         // Empty tree just returns proof with no sibling hash.
-        let mut next_node_key = NodeKey::new_empty_path(version);
+        // let mut next_node_key = NodeKey::new_empty_path(version);
+        let mut next_node_key = state_root_hash;
         let mut siblings = vec![];
         let nibble_path = NibblePath::new(key.to_vec());
         let mut nibble_iter = nibble_path.nibbles();
@@ -522,18 +530,17 @@ where
                     let (child_node_key, mut siblings_in_internal) =
                         internal_node.get_child_with_siblings(&next_node_key, queried_child_index);
                     siblings.append(&mut siblings_in_internal);
-                    next_node_key = match child_node_key {
-                        Some(node_key) => node_key,
-                        None => {
-                            return Ok((
-                                None,
-                                SparseMerkleProof::new(None, {
-                                    siblings.reverse();
-                                    siblings
-                                }),
-                            ))
-                        }
-                    };
+                    if let Some(node_key) = child_node_key {
+                        next_node_key = node_key;
+                    } else {
+                        return Ok((
+                            None,
+                            SparseMerkleProof::new(None, {
+                                siblings.reverse();
+                                siblings
+                            }),
+                        ));
+                    }
                 }
                 Node::Leaf(leaf_node) => {
                     return Ok((
@@ -569,10 +576,10 @@ where
     /// Gets the proof that shows a list of keys up to `rightmost_key_to_prove` exist at `version`.
     pub fn get_range_proof(
         &self,
+        state_root_hash: HashValue,
         rightmost_key_to_prove: HashValue,
-        version: Version,
     ) -> Result<SparseMerkleRangeProof> {
-        let (account, proof) = self.get_with_proof(rightmost_key_to_prove, version)?;
+        let (account, proof) = self.get_with_proof(state_root_hash, rightmost_key_to_prove)?;
         ensure!(account.is_some(), "rightmost_key_to_prove must exist.");
 
         let siblings = proof
@@ -594,14 +601,18 @@ where
     }
 
     #[cfg(test)]
-    pub fn get(&self, key: HashValue, version: Version) -> Result<Option<AccountStateBlob>> {
-        Ok(self.get_with_proof(key, version)?.0)
+    pub fn get(
+        &self,
+        state_root_hash: HashValue,
+        key: HashValue,
+    ) -> Result<Option<AccountStateBlob>> {
+        Ok(self.get_with_proof(state_root_hash, key)?.0)
     }
-
-    #[cfg(any(test, feature = "fuzzing"))]
-    pub fn get_root_hash(&self, version: Version) -> Result<HashValue> {
-        let root_node_key = NodeKey::new_empty_path(version);
-        let root_node = self.reader.get_node(&root_node_key)?;
-        Ok(root_node.hash())
-    }
+    //
+    // #[cfg(any(test, feature = "fuzzing"))]
+    // pub fn get_root_hash(&self, version: Version) -> Result<HashValue> {
+    //     let root_node_key = NodeKey::new_empty_path(version);
+    //     let root_node = self.reader.get_node(&root_node_key)?;
+    //     Ok(root_node.hash())
+    // }
 }

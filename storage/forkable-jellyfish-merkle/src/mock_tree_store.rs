@@ -6,6 +6,7 @@ use crate::{
     NodeBatch, StaleNodeIndex, TreeReader, TreeUpdateBatch, TreeWriter,
 };
 use anyhow::{bail, ensure, Result};
+use libra_crypto::HashValue;
 use libra_types::transaction::Version;
 use std::{
     collections::{hash_map::Entry, BTreeSet, HashMap},
@@ -79,7 +80,7 @@ impl MockTreeStore {
         Ok(())
     }
 
-    pub fn purge_stale_nodes(&self, least_readable_version: Version) -> Result<()> {
+    pub fn purge_stale_nodes(&self, state_root_hash: HashValue) -> Result<()> {
         let mut wlocked = self.0.write().unwrap();
 
         // Only records retired before or at `least_readable_version` can be purged in order
@@ -87,7 +88,7 @@ impl MockTreeStore {
         let to_prune = wlocked
             .1
             .iter()
-            .take_while(|log| log.stale_since_version <= least_readable_version)
+            .take_while(|log| log.stale_since_version == state_root_hash)
             .cloned()
             .collect::<Vec<_>>();
 

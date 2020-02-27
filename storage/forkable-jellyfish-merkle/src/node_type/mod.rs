@@ -42,92 +42,94 @@ use std::{
 };
 use thiserror::Error;
 
-/// The unique key of each node.
-#[derive(Clone, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
-#[cfg_attr(any(test, feature = "fuzzing"), derive(Arbitrary))]
-pub struct NodeKey {
-    // The version at which the node is created.
-    version: Version,
-    // The nibble path this node represents in the tree.
-    nibble_path: NibblePath,
-}
+pub type NodeKey = HashValue;
 
-impl NodeKey {
-    /// Creates a new `NodeKey`.
-    pub fn new(version: Version, nibble_path: NibblePath) -> Self {
-        Self {
-            version,
-            nibble_path,
-        }
-    }
-
-    /// A shortcut to generate a node key consisting of a version and an empty nibble path.
-    pub fn new_empty_path(version: Version) -> Self {
-        Self::new(version, NibblePath::new(vec![]))
-    }
-
-    /// Gets the version.
-    pub fn version(&self) -> Version {
-        self.version
-    }
-
-    /// Gets the nibble path.
-    pub fn nibble_path(&self) -> &NibblePath {
-        &self.nibble_path
-    }
-
-    /// Generates a child node key based on this node key.
-    pub fn gen_child_node_key(&self, version: Version, n: Nibble) -> Self {
-        let mut node_nibble_path = self.nibble_path().clone();
-        node_nibble_path.push(n);
-        Self::new(version, node_nibble_path)
-    }
-
-    /// Generates parent node key at the same version based on this node key.
-    pub fn gen_parent_node_key(&self) -> Self {
-        let mut node_nibble_path = self.nibble_path().clone();
-        assert!(
-            node_nibble_path.pop().is_some(),
-            "Current node key is root.",
-        );
-        Self::new(self.version, node_nibble_path)
-    }
-
-    /// Sets the version to the given version.
-    pub fn set_version(&mut self, version: Version) {
-        self.version = version;
-    }
-
-    /// Serializes to bytes for physical storage enforcing the same order as that in memory.
-    pub fn encode(&self) -> Result<Vec<u8>> {
-        let mut out = vec![];
-        out.write_u64::<BigEndian>(self.version())?;
-        out.write_u8(self.nibble_path().num_nibbles() as u8)?;
-        out.write_all(self.nibble_path().bytes())?;
-        Ok(out)
-    }
-
-    /// Recovers from serialized bytes in physical storage.
-    pub fn decode(val: &[u8]) -> Result<NodeKey> {
-        let mut reader = Cursor::new(val);
-        let version = reader.read_u64::<BigEndian>()?;
-        let num_nibbles = reader.read_u8()? as usize;
-        let mut nibble_bytes = Vec::with_capacity((num_nibbles + 1) / 2);
-        reader.read_to_end(&mut nibble_bytes)?;
-        ensure!(
-            (num_nibbles + 1) / 2 == nibble_bytes.len(),
-            "encoded num_nibbles {} mismatches nibble path bytes {:?}",
-            num_nibbles,
-            nibble_bytes
-        );
-        let nibble_path = if num_nibbles % 2 == 0 {
-            NibblePath::new(nibble_bytes)
-        } else {
-            NibblePath::new_odd(nibble_bytes)
-        };
-        Ok(NodeKey::new(version, nibble_path))
-    }
-}
+// /// The unique key of each node.
+// #[derive(Clone, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
+// #[cfg_attr(any(test, feature = "fuzzing"), derive(Arbitrary))]
+// pub struct NodeKey {
+//     // The version at which the node is created.
+//     version: Version,
+//     // The nibble path this node represents in the tree.
+//     nibble_path: NibblePath,
+// }
+//
+// impl NodeKey {
+//     /// Creates a new `NodeKey`.
+//     pub fn new(version: Version, nibble_path: NibblePath) -> Self {
+//         Self {
+//             version,
+//             nibble_path,
+//         }
+//     }
+//
+//     /// A shortcut to generate a node key consisting of a version and an empty nibble path.
+//     pub fn new_empty_path(version: Version) -> Self {
+//         Self::new(version, NibblePath::new(vec![]))
+//     }
+//
+//     /// Gets the version.
+//     pub fn version(&self) -> Version {
+//         self.version
+//     }
+//
+//     /// Gets the nibble path.
+//     pub fn nibble_path(&self) -> &NibblePath {
+//         &self.nibble_path
+//     }
+//
+//     /// Generates a child node key based on this node key.
+//     pub fn gen_child_node_key(&self, version: Version, n: Nibble) -> Self {
+//         let mut node_nibble_path = self.nibble_path().clone();
+//         node_nibble_path.push(n);
+//         Self::new(version, node_nibble_path)
+//     }
+//
+//     /// Generates parent node key at the same version based on this node key.
+//     pub fn gen_parent_node_key(&self) -> Self {
+//         let mut node_nibble_path = self.nibble_path().clone();
+//         assert!(
+//             node_nibble_path.pop().is_some(),
+//             "Current node key is root.",
+//         );
+//         Self::new(self.version, node_nibble_path)
+//     }
+//
+//     /// Sets the version to the given version.
+//     pub fn set_version(&mut self, version: Version) {
+//         self.version = version;
+//     }
+//
+//     /// Serializes to bytes for physical storage enforcing the same order as that in memory.
+//     pub fn encode(&self) -> Result<Vec<u8>> {
+//         let mut out = vec![];
+//         out.write_u64::<BigEndian>(self.version())?;
+//         out.write_u8(self.nibble_path().num_nibbles() as u8)?;
+//         out.write_all(self.nibble_path().bytes())?;
+//         Ok(out)
+//     }
+//
+//     /// Recovers from serialized bytes in physical storage.
+//     pub fn decode(val: &[u8]) -> Result<NodeKey> {
+//         let mut reader = Cursor::new(val);
+//         let version = reader.read_u64::<BigEndian>()?;
+//         let num_nibbles = reader.read_u8()? as usize;
+//         let mut nibble_bytes = Vec::with_capacity((num_nibbles + 1) / 2);
+//         reader.read_to_end(&mut nibble_bytes)?;
+//         ensure!(
+//             (num_nibbles + 1) / 2 == nibble_bytes.len(),
+//             "encoded num_nibbles {} mismatches nibble path bytes {:?}",
+//             num_nibbles,
+//             nibble_bytes
+//         );
+//         let nibble_path = if num_nibbles % 2 == 0 {
+//             NibblePath::new(nibble_bytes)
+//         } else {
+//             NibblePath::new_odd(nibble_bytes)
+//         };
+//         Ok(NodeKey::new(version, nibble_path))
+//     }
+// }
 
 /// Each child of [`InternalNode`] encapsulates a nibble forking at this node.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -135,21 +137,17 @@ impl NodeKey {
 pub struct Child {
     // The hash value of this child node.
     pub hash: HashValue,
-    // `version`, the `nibble_path` of the ['NodeKey`] of this [`InternalNode`] the child belongs
-    // to and the child's index constitute the [`NodeKey`] to uniquely identify this child node
-    // from the storage. Used by `[`NodeKey::gen_child_node_key`].
-    pub version: Version,
+    // // `version`, the `nibble_path` of the ['NodeKey`] of this [`InternalNode`] the child belongs
+    // // to and the child's index constitute the [`NodeKey`] to uniquely identify this child node
+    // // from the storage. Used by `[`NodeKey::gen_child_node_key`].
+    // pub version: Version,
     // Whether the child is a leaf node.
     pub is_leaf: bool,
 }
 
 impl Child {
-    pub fn new(hash: HashValue, version: Version, is_leaf: bool) -> Self {
-        Self {
-            hash,
-            version,
-            is_leaf,
-        }
+    pub fn new(hash: HashValue, is_leaf: bool) -> Self {
+        Self { hash, is_leaf }
     }
 }
 
@@ -269,7 +267,7 @@ impl InternalNode {
         for _ in 0..existence_bitmap.count_ones() {
             let next_child = existence_bitmap.trailing_zeros() as u8;
             let child = &self.children[&Nibble::from(next_child)];
-            serialize_u64_varint(child.version, binary);
+            // serialize_u64_varint(child.version, binary);
             binary.extend(child.hash.to_vec());
             existence_bitmap &= !(1 << next_child);
         }
@@ -299,7 +297,7 @@ impl InternalNode {
         let mut children = HashMap::new();
         for _ in 0..existence_bitmap.count_ones() {
             let next_child = existence_bitmap.trailing_zeros() as u8;
-            let version = deserialize_u64_varint(&mut reader)?;
+            // let version = deserialize_u64_varint(&mut reader)?;
             let pos = reader.position() as usize;
             let remaining = len - pos;
             ensure!(
@@ -313,7 +311,7 @@ impl InternalNode {
                 Nibble::from(next_child),
                 Child::new(
                     HashValue::from_slice(&reader.get_ref()[pos..pos + size_of::<HashValue>()])?,
-                    version,
+                    // version,
                     (leaf_bitmap & child_bit) != 0,
                 ),
             );
@@ -457,7 +455,7 @@ impl InternalNode {
                 let only_child_index = Nibble::from(range_existence_bitmap.trailing_zeros() as u8);
                 return (
                     {
-                        let only_child_version = self
+                        let only_child = self
                             .child(only_child_index)
                             // Should be guaranteed by the self invariants, but these are not easy to express at the moment
                             .with_context(|| {
@@ -467,9 +465,8 @@ impl InternalNode {
                                     only_child_index
                                 )
                             })
-                            .unwrap()
-                            .version;
-                        Some(node_key.gen_child_node_key(only_child_version, only_child_index))
+                            .unwrap();
+                        Some(only_child.hash)
                     },
                     siblings,
                 );

@@ -74,6 +74,7 @@ use crate::{
     StaleNodeIndex, TreeReader, TreeUpdateBatch,
 };
 use anyhow::{bail, Result};
+use libra_crypto::hash::SPARSE_MERKLE_PLACEHOLDER_HASH;
 use libra_crypto::HashValue;
 use libra_types::transaction::Version;
 use std::{
@@ -107,10 +108,7 @@ struct FrozenTreeCache {
 /// blobs.
 pub struct TreeCache<'a, R: 'a + TreeReader> {
     /// `NodeKey` of the current root node in cache.
-    root_node_key: NodeKey,
-
-    /// The version of the transaction to which the upcoming `put`s will be related.
-    next_version: Version,
+    root_node_key: HashValue,
 
     /// Intermediate nodes keyed by node hash
     node_cache: HashMap<NodeKey, Node>,
@@ -136,22 +134,17 @@ where
     R: 'a + TreeReader,
 {
     /// Constructs a new `TreeCache` instance.
-    pub fn new(reader: &'a R, next_version: Version) -> Self {
+    pub fn new(reader: &'a R, state_root_hash: Option<HashValue>) -> Self {
         let mut node_cache = HashMap::new();
-        let root_node_key = if next_version == 0 {
-            // If the first version is 0, it means we need to start from an empty tree so we insert
-            // a null node beforehand deliberately to deal with this corner case.
-            node_cache.insert(NodeKey::new_empty_path(0), Node::new_null());
-            NodeKey::new_empty_path(0)
-        } else {
-            NodeKey::new_empty_path(next_version - 1)
+        let root_node_key = match state_root_hash {
+            None => *SPARSE_MERKLE_PLACEHOLDER_HASH,
+            Some(root) => root,
         };
         Self {
             node_cache,
             stale_node_index_cache: HashSet::new(),
             frozen_cache: FrozenTreeCache::default(),
             root_node_key,
-            next_version,
             reader,
             num_stale_leaves: 0,
             num_new_leaves: 0,
@@ -160,6 +153,9 @@ where
 
     /// Gets a node with given node key. If it doesn't exist in node cache, read from `reader`.
     pub fn get_node(&self, node_key: &NodeKey) -> Result<Node> {
+        if node_key == &*SPARSE_MERKLE_PLACEHOLDER_HASH {
+            return Ok(Node::Null);
+        }
         Ok(if let Some(node) = self.node_cache.get(node_key) {
             node.clone()
         } else if let Some(node) = self.frozen_cache.node_cache.get(node_key) {
@@ -215,10 +211,11 @@ where
             .get_node(root_node_key)
             .unwrap_or_else(|_| unreachable!("Root node with key {:?} must exist", root_node_key))
             .hash();
+        assert_eq!(root_node_key, &root_hash);
         self.frozen_cache.root_hashes.push(root_hash);
         self.frozen_cache.node_cache.extend(self.node_cache.drain());
 
-        let stale_since_version = self.next_version;
+        let stale_since_version = root_hash;
         self.frozen_cache
             .stale_node_index_cache
             .extend(
@@ -233,8 +230,6 @@ where
         self.num_stale_leaves = 0;
         self.frozen_cache.num_new_leaves += self.num_new_leaves;
         self.num_new_leaves = 0;
-
-        self.next_version += 1;
     }
 }
 
