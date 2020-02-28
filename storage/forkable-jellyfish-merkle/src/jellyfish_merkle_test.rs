@@ -461,96 +461,101 @@ fn test_insert_at_leaf_with_multiple_internals_created() {
 //     }
 // }
 //
-// fn many_keys_get_proof_and_verify_tree_root(seed: &[u8], num_keys: usize) {
-//     assert!(seed.len() < 32);
-//     let mut actual_seed = [0u8; 32];
-//     actual_seed[..seed.len()].copy_from_slice(&seed);
-//     let mut rng: StdRng = StdRng::from_seed(actual_seed);
-//
-//     let db = MockTreeStore::default();
-//     let tree = JellyfishMerkleTree::new(&db);
-//
-//     let mut kvs = vec![];
-//     for _i in 0..num_keys {
-//         let key = HashValue::random_with_rng(&mut rng);
-//         let value = AccountStateBlob::from(HashValue::random_with_rng(&mut rng).to_vec());
-//         kvs.push((key, value));
-//     }
-//
-//     let (root, batch) = tree.put_blob_set(kvs.clone(), 0 /* version */).unwrap();
-//     db.write_tree_update_batch(batch).unwrap();
-//
-//     for (k, v) in &kvs {
-//         let (value, proof) = tree.get_with_proof(*k, 0).unwrap();
-//         assert_eq!(value.unwrap(), *v);
-//         assert!(proof.verify(root, *k, Some(v)).is_ok());
-//     }
-// }
-//
-// #[test]
-// fn test_1000_keys() {
-//     let seed: &[_] = &[1, 2, 3, 4];
-//     many_keys_get_proof_and_verify_tree_root(seed, 1000);
-// }
-//
-// fn many_versions_get_proof_and_verify_tree_root(seed: &[u8], num_versions: usize) {
-//     assert!(seed.len() < 32);
-//     let mut actual_seed = [0u8; 32];
-//     actual_seed[..seed.len()].copy_from_slice(&seed);
-//     let mut rng: StdRng = StdRng::from_seed(actual_seed);
-//
-//     let db = MockTreeStore::default();
-//     let tree = JellyfishMerkleTree::new(&db);
-//
-//     let mut kvs = vec![];
-//     let mut roots = vec![];
-//
-//     for _i in 0..num_versions {
-//         let key = HashValue::random_with_rng(&mut rng);
-//         let value = AccountStateBlob::from(HashValue::random_with_rng(&mut rng).to_vec());
-//         let new_value = AccountStateBlob::from(HashValue::random_with_rng(&mut rng).to_vec());
-//         kvs.push((key, value.clone(), new_value.clone()));
-//     }
-//
-//     for (idx, kvs) in kvs.iter().enumerate() {
-//         let (root, batch) = tree
-//             .put_blob_set(vec![(kvs.0, kvs.1.clone())], idx as Version)
-//             .unwrap();
-//         roots.push(root);
-//         db.write_tree_update_batch(batch).unwrap();
-//     }
-//
-//     // Update value of all keys
-//     for (idx, kvs) in kvs.iter().enumerate() {
-//         let version = (num_versions + idx) as Version;
-//         let (root, batch) = tree
-//             .put_blob_set(vec![(kvs.0, kvs.2.clone())], version)
-//             .unwrap();
-//         roots.push(root);
-//         db.write_tree_update_batch(batch).unwrap();
-//     }
-//
-//     for (i, (k, v, _)) in kvs.iter().enumerate() {
-//         let random_version = rng.gen_range(i, i + num_versions);
-//         let (value, proof) = tree.get_with_proof(*k, random_version as Version).unwrap();
-//         assert_eq!(value.unwrap(), *v);
-//         assert!(proof.verify(roots[random_version], *k, Some(v)).is_ok());
-//     }
-//
-//     for (i, (k, _, v)) in kvs.iter().enumerate() {
-//         let random_version = rng.gen_range(i + num_versions, 2 * num_versions);
-//         let (value, proof) = tree.get_with_proof(*k, random_version as Version).unwrap();
-//         assert_eq!(value.unwrap(), *v);
-//         assert!(proof.verify(roots[random_version], *k, Some(v)).is_ok());
-//     }
-// }
-//
-// #[test]
-// fn test_1000_versions() {
-//     let seed: &[_] = &[1, 2, 3, 4];
-//     many_versions_get_proof_and_verify_tree_root(seed, 1000);
-// }
-//
+fn many_keys_get_proof_and_verify_tree_root(seed: &[u8], num_keys: usize) {
+    assert!(seed.len() < 32);
+    let mut actual_seed = [0u8; 32];
+    actual_seed[..seed.len()].copy_from_slice(&seed);
+    let mut rng: StdRng = StdRng::from_seed(actual_seed);
+
+    let db = MockTreeStore::default();
+    let tree = JellyfishMerkleTree::new(&db);
+
+    let mut kvs = vec![];
+    for _i in 0..num_keys {
+        let key = HashValue::random_with_rng(&mut rng);
+        let value = AccountStateBlob::from(HashValue::random_with_rng(&mut rng).to_vec());
+        kvs.push((key, value));
+    }
+
+    let (root, batch) = tree.put_blob_set(None, kvs.clone()).unwrap();
+    db.write_tree_update_batch(batch).unwrap();
+
+    for (k, v) in &kvs {
+        let (value, proof) = tree.get_with_proof(root, *k).unwrap();
+        assert_eq!(value.unwrap(), *v);
+        assert!(proof.verify(root, *k, Some(v)).is_ok());
+    }
+}
+
+#[test]
+fn test_1000_keys() {
+    let seed: &[_] = &[1, 2, 3, 4];
+    many_keys_get_proof_and_verify_tree_root(seed, 1000);
+}
+
+fn many_versions_get_proof_and_verify_tree_root(seed: &[u8], num_versions: usize) {
+    assert!(seed.len() < 32);
+    let mut actual_seed = [0u8; 32];
+    actual_seed[..seed.len()].copy_from_slice(&seed);
+    let mut rng: StdRng = StdRng::from_seed(actual_seed);
+
+    let db = MockTreeStore::default();
+    let tree = JellyfishMerkleTree::new(&db);
+
+    let mut kvs = vec![];
+
+    for _i in 0..num_versions {
+        let key = HashValue::random_with_rng(&mut rng);
+        let value = AccountStateBlob::from(HashValue::random_with_rng(&mut rng).to_vec());
+        let new_value = AccountStateBlob::from(HashValue::random_with_rng(&mut rng).to_vec());
+        kvs.push((key, value.clone(), new_value.clone()));
+    }
+
+    let mut roots = vec![];
+    let mut current_root = None;
+    for (idx, kvs) in kvs.iter().enumerate() {
+        let (root, batch) = tree
+            .put_blob_set(current_root, vec![(kvs.0, kvs.1.clone())])
+            .unwrap();
+        roots.push(root);
+        db.write_tree_update_batch(batch).unwrap();
+        current_root = Some(root);
+    }
+
+    // Update value of all keys
+    for (idx, kvs) in kvs.iter().enumerate() {
+        let version = (num_versions + idx) as Version;
+        let (root, batch) = tree
+            .put_blob_set(current_root, vec![(kvs.0, kvs.2.clone())])
+            .unwrap();
+        roots.push(root);
+        db.write_tree_update_batch(batch).unwrap();
+        current_root = Some(root);
+    }
+
+    for (i, (k, v, _)) in kvs.iter().enumerate() {
+        let random_version = rng.gen_range(i, i + num_versions);
+        let history_root = roots[random_version];
+        let (value, proof) = tree.get_with_proof(history_root, *k).unwrap();
+        assert_eq!(value.unwrap(), *v);
+        assert!(proof.verify(history_root, *k, Some(v)).is_ok());
+    }
+
+    for (i, (k, _, v)) in kvs.iter().enumerate() {
+        let random_version = rng.gen_range(i + num_versions, 2 * num_versions);
+        let history_root = roots[random_version];
+        let (value, proof) = tree.get_with_proof(history_root, *k).unwrap();
+        assert_eq!(value.unwrap(), *v);
+        assert!(proof.verify(history_root, *k, Some(v)).is_ok());
+    }
+}
+
+#[test]
+fn test_1000_versions() {
+    let seed: &[_] = &[1, 2, 3, 4];
+    many_versions_get_proof_and_verify_tree_root(seed, 1000);
+}
+
 // proptest! {
 //     #![proptest_config(ProptestConfig::with_cases(10))]
 //
