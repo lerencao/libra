@@ -335,6 +335,7 @@ impl FunctionTargetProcessor for VerificationAnalysisProcessorV2 {
         fun_env: &FunctionEnv<'_>,
         data: FunctionData,
     ) -> FunctionData {
+        debug!("verify v2 processing `{}`", fun_env.get_full_name_str());
         let global_env = fun_env.module_env.env;
         let fun_id = fun_env.get_qualified_id();
         let variant = data.variant.clone();
